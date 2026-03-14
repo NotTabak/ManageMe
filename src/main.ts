@@ -1,124 +1,8 @@
 import "./style.css";
 import { ProjectService } from "./ProjectService";
-import type { Project } from "./Project";
-
-const service = new ProjectService();
-
-let editingId: string | null = null;
-
-document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
-  <div class="container">
-    <h1>ManageMe</h1>
-
-    <form id="project-form">
-      <input type="text" id="name" placeholder="Nazwa projektu" required />
-      <input type="text" id="description" placeholder="Opis projektu" required />
-      <button type="submit" id="submit-btn">Dodaj projekt</button>
-      <button type="button" id="cancel-btn" style="display:none;">Anuluj</button>
-    </form>
-
-    <p id="empty-state" style="display:none; margin-top:12px;">Brak projektów</p>
-    <ul id="project-list"></ul>
-  </div>
-`;
-
-const form = document.getElementById("project-form") as HTMLFormElement;
-const list = document.getElementById("project-list") as HTMLUListElement;
-
-const nameInput = document.getElementById("name") as HTMLInputElement;
-const descInput = document.getElementById("description") as HTMLInputElement;
-
-const submitBtn = document.getElementById("submit-btn") as HTMLButtonElement;
-const cancelBtn = document.getElementById("cancel-btn") as HTMLButtonElement;
-
-const emptyState = document.getElementById("empty-state") as HTMLParagraphElement;
-
-function setModeCreate() {
-  editingId = null;
-  submitBtn.textContent = "Dodaj projekt";
-  cancelBtn.style.display = "none";
-  form.reset();
-  nameInput.focus();
-}
-
-function setModeEdit(project: Project) {
-  editingId = project.id;
-  nameInput.value = project.name;
-  descInput.value = project.description;
-
-  submitBtn.textContent = "Zapisz zmiany";
-  cancelBtn.style.display = "inline-block";
-  nameInput.focus();
-}
-
-function render(): void {
-  const projects = service.getAll();
-  list.innerHTML = "";
-
-  emptyState.style.display = projects.length === 0 ? "block" : "none";
-
-  projects.forEach((project) => {
-    const li = document.createElement("li");
-
-    li.className = "project-item";
-    li.innerHTML = `
-      <div>
-        <div class="project-title">${escapeHtml(project.name)}</div>
-        <div class="project-desc">${escapeHtml(project.description)}</div>
-      </div>
-
-      <div class="actions">
-        <button class="edit-btn" data-id="${project.id}">Edytuj</button>
-        <button class="delete-btn" data-id="${project.id}">Usuń</button>
-      </div>
-    `;
-
-    list.appendChild(li);
-  });
-
-  document.querySelectorAll<HTMLButtonElement>(".edit-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.id!;
-      const p = service.getAll().find((x) => x.id === id);
-      if (p) setModeEdit(p);
-    });
-  });
-
-  document.querySelectorAll<HTMLButtonElement>(".delete-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.id!;
-      service.delete(id);
-
-      if (editingId === id) setModeCreate();
-
-      render();
-    });
-  });
-}
-
-form.addEventListener("submit", (e) => {
-  e.preventDefault();
-
-  const name = nameInput.value.trim();
-  const description = descInput.value.trim();
-
-  if (!name || !description) return;
-
-  if (editingId) {
-    service.update({ id: editingId, name, description });
-    setModeCreate();
-  } else {
-    service.create({ name, description });
-    form.reset();
-    nameInput.focus();
-  }
-
-  render();
-});
-
-cancelBtn.addEventListener("click", () => {
-  setModeCreate();
-});
+import { UserService } from "./UserService";
+import { StoryService } from "./StoryService";
+import type { Story } from "./Story";
 
 function escapeHtml(value: string): string {
   return value
@@ -129,4 +13,330 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
-render();
+const projectService = new ProjectService();
+const storyService = new StoryService();
+const userService = new UserService();
+const currentUser = userService.getLoggedUser();
+
+let editingProjectId: string | null = null;
+let editingStoryId: string | null = null;
+
+const PRIORITY_LABEL: Record<string, string> = {
+  low: "Niski",
+  medium: "Średni",
+  high: "Wysoki",
+};
+
+// ── HTML skeleton ────────────────────────────────────────────────────────────
+document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
+  <div class="app-layout">
+    <header class="app-header">
+      <span class="app-title">ManageMe</span>
+      <span class="user-badge">${escapeHtml(currentUser.firstName)} ${escapeHtml(currentUser.lastName)}</span>
+    </header>
+
+    <main class="app-main">
+      <section class="panel" id="projects-panel">
+        <h2 class="panel-title">Projekty</h2>
+        <form id="project-form">
+          <input type="text" id="proj-name" placeholder="Nazwa projektu" required />
+          <input type="text" id="proj-desc" placeholder="Opis projektu" required />
+          <div class="form-row">
+            <button type="submit" id="proj-submit-btn">Dodaj projekt</button>
+            <button type="button" id="proj-cancel-btn" style="display:none;">Anuluj</button>
+          </div>
+        </form>
+        <p id="proj-empty" class="empty-state" style="display:none;">Brak projektów</p>
+        <ul id="project-list"></ul>
+      </section>
+
+      <section class="panel" id="stories-panel">
+        <div id="stories-placeholder" class="placeholder-box">
+          <p class="placeholder-text">Wybierz projekt, aby zobaczyć historyjki</p>
+        </div>
+        <div id="stories-content" style="display:none;">
+          <h2 class="panel-title" id="stories-title"></h2>
+          <form id="story-form">
+            <div class="story-form-grid">
+              <input type="text" id="story-name" placeholder="Nazwa historyjki" required />
+              <input type="text" id="story-desc" placeholder="Opis historyjki" required />
+              <select id="story-priority">
+                <option value="low">Niski priorytet</option>
+                <option value="medium" selected>Średni priorytet</option>
+                <option value="high">Wysoki priorytet</option>
+              </select>
+              <select id="story-status">
+                <option value="todo" selected>Do zrobienia</option>
+                <option value="doing">W trakcie</option>
+                <option value="done">Gotowe</option>
+              </select>
+            </div>
+            <div class="form-row" style="margin-top:10px;">
+              <button type="submit" id="story-submit-btn">Dodaj historyjkę</button>
+              <button type="button" id="story-cancel-btn" style="display:none;">Anuluj</button>
+            </div>
+          </form>
+          <div class="story-columns">
+            <div class="story-col">
+              <h3 class="col-title col-todo">Do zrobienia</h3>
+              <ul id="stories-todo" class="story-list"></ul>
+            </div>
+            <div class="story-col">
+              <h3 class="col-title col-doing">W trakcie</h3>
+              <ul id="stories-doing" class="story-list"></ul>
+            </div>
+            <div class="story-col">
+              <h3 class="col-title col-done">Gotowe</h3>
+              <ul id="stories-done" class="story-list"></ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+`;
+
+// ── DOM references ────────────────────────────────────────────────────────────
+const projForm = document.getElementById("project-form") as HTMLFormElement;
+const projNameInput = document.getElementById("proj-name") as HTMLInputElement;
+const projDescInput = document.getElementById("proj-desc") as HTMLInputElement;
+const projSubmitBtn = document.getElementById("proj-submit-btn") as HTMLButtonElement;
+const projCancelBtn = document.getElementById("proj-cancel-btn") as HTMLButtonElement;
+const projEmpty = document.getElementById("proj-empty") as HTMLParagraphElement;
+const projectList = document.getElementById("project-list") as HTMLUListElement;
+
+const storyForm = document.getElementById("story-form") as HTMLFormElement;
+const storyNameInput = document.getElementById("story-name") as HTMLInputElement;
+const storyDescInput = document.getElementById("story-desc") as HTMLInputElement;
+const storyPrioritySelect = document.getElementById("story-priority") as HTMLSelectElement;
+const storyStatusSelect = document.getElementById("story-status") as HTMLSelectElement;
+const storySubmitBtn = document.getElementById("story-submit-btn") as HTMLButtonElement;
+const storyCancelBtn = document.getElementById("story-cancel-btn") as HTMLButtonElement;
+
+const storiesPlaceholder = document.getElementById("stories-placeholder") as HTMLDivElement;
+const storiesContent = document.getElementById("stories-content") as HTMLDivElement;
+const storiesTitle = document.getElementById("stories-title") as HTMLHeadingElement;
+
+// ── Project form modes ────────────────────────────────────────────────────────
+function setProjectModeCreate(): void {
+  editingProjectId = null;
+  projSubmitBtn.textContent = "Dodaj projekt";
+  projCancelBtn.style.display = "none";
+  projForm.reset();
+  projNameInput.focus();
+}
+
+function setProjectModeEdit(project: { id: string; name: string; description: string }): void {
+  editingProjectId = project.id;
+  projNameInput.value = project.name;
+  projDescInput.value = project.description;
+  projSubmitBtn.textContent = "Zapisz projekt";
+  projCancelBtn.style.display = "inline-block";
+  projNameInput.focus();
+}
+
+// ── Story form modes ──────────────────────────────────────────────────────────
+function setStoryModeCreate(): void {
+  editingStoryId = null;
+  storySubmitBtn.textContent = "Dodaj historyjkę";
+  storyCancelBtn.style.display = "none";
+  storyForm.reset();
+}
+
+function setStoryModeEdit(story: Story): void {
+  editingStoryId = story.id;
+  storyNameInput.value = story.name;
+  storyDescInput.value = story.description;
+  storyPrioritySelect.value = story.priority;
+  storyStatusSelect.value = story.status;
+  storySubmitBtn.textContent = "Zapisz historyjkę";
+  storyCancelBtn.style.display = "inline-block";
+  storyNameInput.focus();
+}
+
+// ── Render projects ───────────────────────────────────────────────────────────
+function renderProjects(): void {
+  const projects = projectService.getAll();
+  const active = projectService.getActive();
+  projectList.innerHTML = "";
+  projEmpty.style.display = projects.length === 0 ? "block" : "none";
+
+  projects.forEach((project) => {
+    const isActive = active?.id === project.id;
+    const li = document.createElement("li");
+    li.className = `project-item${isActive ? " project-active" : ""}`;
+    li.innerHTML = `
+      <div>
+        <div class="project-title">
+          ${escapeHtml(project.name)}
+          ${isActive ? '<span class="active-badge">aktywny</span>' : ""}
+        </div>
+        <div class="project-desc">${escapeHtml(project.description)}</div>
+      </div>
+      <div class="actions">
+        ${!isActive ? `<button class="select-btn" data-id="${project.id}">Wybierz</button>` : ""}
+        <button class="edit-btn" data-id="${project.id}">Edytuj</button>
+        <button class="delete-btn" data-id="${project.id}">Usuń</button>
+      </div>
+    `;
+    projectList.appendChild(li);
+  });
+
+  projectList.querySelectorAll<HTMLButtonElement>(".select-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      projectService.setActive(btn.dataset.id!);
+      setProjectModeCreate();
+      renderProjects();
+      renderStories();
+    });
+  });
+
+  projectList.querySelectorAll<HTMLButtonElement>(".edit-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = projectService.getAll().find((x) => x.id === btn.dataset.id);
+      if (p) setProjectModeEdit(p);
+    });
+  });
+
+  projectList.querySelectorAll<HTMLButtonElement>(".delete-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      projectService.delete(btn.dataset.id!);
+      if (editingProjectId === btn.dataset.id) setProjectModeCreate();
+      renderProjects();
+      renderStories();
+    });
+  });
+}
+
+// ── Render story columns ──────────────────────────────────────────────────────
+function renderStoryColumn(stories: Story[], listEl: HTMLUListElement): void {
+  listEl.innerHTML = "";
+
+  if (stories.length === 0) {
+    listEl.innerHTML = `<li class="story-empty">Brak historyjek</li>`;
+    return;
+  }
+
+  stories.forEach((story) => {
+    const date = new Date(story.createdAt).toLocaleDateString("pl-PL");
+    const owner = userService.getLoggedUser();
+    const ownerName = story.ownerId === owner.id
+      ? `${escapeHtml(owner.firstName)} ${escapeHtml(owner.lastName)}`
+      : escapeHtml(story.ownerId);
+    const li = document.createElement("li");
+    li.className = "story-card";
+    li.innerHTML = `
+      <div class="story-card-top">
+        <span class="story-card-name">${escapeHtml(story.name)}</span>
+        <span class="priority-badge priority-${story.priority}">${PRIORITY_LABEL[story.priority]}</span>
+      </div>
+      <div class="story-card-desc">${escapeHtml(story.description)}</div>
+      <div class="story-card-footer">
+        <div class="story-meta">
+          <span class="story-owner">👤 ${ownerName}</span>
+          <span class="story-date">${date}</span>
+        </div>
+        <div class="actions">
+          <button class="story-edit-btn" data-id="${story.id}">Edytuj</button>
+          <button class="story-delete-btn" data-id="${story.id}">Usuń</button>
+        </div>
+      </div>
+    `;
+    listEl.appendChild(li);
+  });
+}
+
+function renderStories(): void {
+  const active = projectService.getActive();
+
+  if (!active) {
+    storiesPlaceholder.style.display = "flex";
+    storiesContent.style.display = "none";
+    return;
+  }
+
+  storiesPlaceholder.style.display = "none";
+  storiesContent.style.display = "block";
+  storiesTitle.textContent = `Historyjki: ${active.name}`;
+
+  const stories = storyService.getByProject(active.id);
+  const todoList = document.getElementById("stories-todo") as HTMLUListElement;
+  const doingList = document.getElementById("stories-doing") as HTMLUListElement;
+  const doneList = document.getElementById("stories-done") as HTMLUListElement;
+
+  renderStoryColumn(stories.filter((s) => s.status === "todo"), todoList);
+  renderStoryColumn(stories.filter((s) => s.status === "doing"), doingList);
+  renderStoryColumn(stories.filter((s) => s.status === "done"), doneList);
+
+  document.querySelectorAll<HTMLButtonElement>(".story-edit-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const s = storyService.getAll().find((x) => x.id === btn.dataset.id);
+      if (s) setStoryModeEdit(s);
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>(".story-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      storyService.delete(btn.dataset.id!);
+      if (editingStoryId === btn.dataset.id) setStoryModeCreate();
+      renderStories();
+    });
+  });
+}
+
+// ── Event handlers ────────────────────────────────────────────────────────────
+projForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = projNameInput.value.trim();
+  const description = projDescInput.value.trim();
+  if (!name || !description) return;
+
+  if (editingProjectId) {
+    projectService.update({ id: editingProjectId, name, description });
+    setProjectModeCreate();
+  } else {
+    projectService.create({ name, description });
+    projForm.reset();
+    projNameInput.focus();
+  }
+  renderProjects();
+  renderStories();
+});
+
+projCancelBtn.addEventListener("click", () => setProjectModeCreate());
+
+storyForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = storyNameInput.value.trim();
+  const description = storyDescInput.value.trim();
+  const priority = storyPrioritySelect.value as Story["priority"];
+  const status = storyStatusSelect.value as Story["status"];
+  const active = projectService.getActive();
+  if (!name || !description || !active) return;
+
+  if (editingStoryId) {
+    const existing = storyService.getAll().find((s) => s.id === editingStoryId);
+    if (existing) {
+      storyService.update({ ...existing, name, description, priority, status });
+    }
+    setStoryModeCreate();
+  } else {
+    storyService.create({
+      name,
+      description,
+      priority,
+      status,
+      projectId: active.id,
+      ownerId: currentUser.id,
+    });
+    storyForm.reset();
+    storyNameInput.focus();
+  }
+  renderStories();
+});
+
+storyCancelBtn.addEventListener("click", () => setStoryModeCreate());
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+renderProjects();
+renderStories();
