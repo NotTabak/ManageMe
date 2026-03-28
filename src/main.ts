@@ -2,7 +2,9 @@ import "./style.css";
 import { ProjectService } from "./ProjectService";
 import { UserService } from "./UserService";
 import { StoryService } from "./StoryService";
+import { TaskService } from "./TaskService";
 import type { Story } from "./Story";
+import type { Task } from "./Task";
 
 function escapeHtml(value: string): string {
   return value
@@ -13,13 +15,21 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
+function fmt(dateStr: string | undefined): string {
+  if (!dateStr) return "—";
+  return new Date(dateStr).toLocaleDateString("pl-PL");
+}
+
 const projectService = new ProjectService();
 const storyService = new StoryService();
 const userService = new UserService();
+const taskService = new TaskService(storyService);
 const currentUser = userService.getLoggedUser();
 
 let editingProjectId: string | null = null;
 let editingStoryId: string | null = null;
+let editingTaskId: string | null = null;
+let activeStoryId: string | null = null;
 
 const PRIORITY_LABEL: Record<string, string> = {
   low: "Niski",
@@ -27,12 +37,27 @@ const PRIORITY_LABEL: Record<string, string> = {
   high: "Wysoki",
 };
 
-// ── HTML skeleton ────────────────────────────────────────────────────────────
+const STATUS_LABEL: Record<string, string> = {
+  todo: "Do zrobienia",
+  doing: "W trakcie",
+  done: "Gotowe",
+};
+
+const ROLE_LABEL: Record<string, string> = {
+  admin: "Admin",
+  developer: "Developer",
+  devops: "DevOps",
+};
+
+// ── HTML skeleton ──────────────────────────────────────────────────────────────
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div class="app-layout">
     <header class="app-header">
       <span class="app-title">ManageMe</span>
-      <span class="user-badge">${escapeHtml(currentUser.firstName)} ${escapeHtml(currentUser.lastName)}</span>
+      <span class="user-badge">
+        ${escapeHtml(currentUser.firstName)} ${escapeHtml(currentUser.lastName)}
+        <span class="role-badge role-${currentUser.role}">${ROLE_LABEL[currentUser.role]}</span>
+      </span>
     </header>
 
     <main class="app-main">
@@ -92,11 +117,60 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           </div>
         </div>
       </section>
+
+      <section class="panel" id="tasks-panel">
+        <div id="tasks-placeholder" class="placeholder-box">
+          <p class="placeholder-text">Wybierz historyjkę, aby zobaczyć zadania</p>
+        </div>
+        <div id="tasks-content" style="display:none;">
+          <h2 class="panel-title" id="tasks-title"></h2>
+          <form id="task-form">
+            <div class="story-form-grid">
+              <input type="text" id="task-name" placeholder="Nazwa zadania" required />
+              <input type="text" id="task-desc" placeholder="Opis zadania" required />
+              <select id="task-priority">
+                <option value="low">Niski priorytet</option>
+                <option value="medium" selected>Średni priorytet</option>
+                <option value="high">Wysoki priorytet</option>
+              </select>
+              <input type="number" id="task-estimated" placeholder="Szac. czas (h)" min="0" step="0.5" required />
+            </div>
+            <div class="form-row" style="margin-top:10px;">
+              <button type="submit" id="task-submit-btn">Dodaj zadanie</button>
+              <button type="button" id="task-cancel-btn" style="display:none;">Anuluj</button>
+            </div>
+          </form>
+          <div class="story-columns">
+            <div class="story-col">
+              <h3 class="col-title col-todo">Do zrobienia</h3>
+              <ul id="tasks-todo" class="story-list"></ul>
+            </div>
+            <div class="story-col">
+              <h3 class="col-title col-doing">W trakcie</h3>
+              <ul id="tasks-doing" class="story-list"></ul>
+            </div>
+            <div class="story-col">
+              <h3 class="col-title col-done">Gotowe</h3>
+              <ul id="tasks-done" class="story-list"></ul>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
+  </div>
+
+  <div id="task-modal" class="modal-overlay" style="display:none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-task-name"></h3>
+        <button id="modal-close-btn" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
   </div>
 `;
 
-// ── DOM references ────────────────────────────────────────────────────────────
+// ── DOM references ─────────────────────────────────────────────────────────────
 const projForm = document.getElementById("project-form") as HTMLFormElement;
 const projNameInput = document.getElementById("proj-name") as HTMLInputElement;
 const projDescInput = document.getElementById("proj-desc") as HTMLInputElement;
@@ -112,12 +186,27 @@ const storyPrioritySelect = document.getElementById("story-priority") as HTMLSel
 const storyStatusSelect = document.getElementById("story-status") as HTMLSelectElement;
 const storySubmitBtn = document.getElementById("story-submit-btn") as HTMLButtonElement;
 const storyCancelBtn = document.getElementById("story-cancel-btn") as HTMLButtonElement;
-
 const storiesPlaceholder = document.getElementById("stories-placeholder") as HTMLDivElement;
 const storiesContent = document.getElementById("stories-content") as HTMLDivElement;
 const storiesTitle = document.getElementById("stories-title") as HTMLHeadingElement;
 
-// ── Project form modes ────────────────────────────────────────────────────────
+const taskForm = document.getElementById("task-form") as HTMLFormElement;
+const taskNameInput = document.getElementById("task-name") as HTMLInputElement;
+const taskDescInput = document.getElementById("task-desc") as HTMLInputElement;
+const taskPrioritySelect = document.getElementById("task-priority") as HTMLSelectElement;
+const taskEstimatedInput = document.getElementById("task-estimated") as HTMLInputElement;
+const taskSubmitBtn = document.getElementById("task-submit-btn") as HTMLButtonElement;
+const taskCancelBtn = document.getElementById("task-cancel-btn") as HTMLButtonElement;
+const tasksPlaceholder = document.getElementById("tasks-placeholder") as HTMLDivElement;
+const tasksContent = document.getElementById("tasks-content") as HTMLDivElement;
+const tasksTitle = document.getElementById("tasks-title") as HTMLHeadingElement;
+
+const taskModal = document.getElementById("task-modal") as HTMLDivElement;
+const modalTaskName = document.getElementById("modal-task-name") as HTMLHeadingElement;
+const modalBody = document.getElementById("modal-body") as HTMLDivElement;
+const modalCloseBtn = document.getElementById("modal-close-btn") as HTMLButtonElement;
+
+// ── Project form modes ─────────────────────────────────────────────────────────
 function setProjectModeCreate(): void {
   editingProjectId = null;
   projSubmitBtn.textContent = "Dodaj projekt";
@@ -135,7 +224,7 @@ function setProjectModeEdit(project: { id: string; name: string; description: st
   projNameInput.focus();
 }
 
-// ── Story form modes ──────────────────────────────────────────────────────────
+// ── Story form modes ───────────────────────────────────────────────────────────
 function setStoryModeCreate(): void {
   editingStoryId = null;
   storySubmitBtn.textContent = "Dodaj historyjkę";
@@ -154,7 +243,26 @@ function setStoryModeEdit(story: Story): void {
   storyNameInput.focus();
 }
 
-// ── Render projects ───────────────────────────────────────────────────────────
+// ── Task form modes ────────────────────────────────────────────────────────────
+function setTaskModeCreate(): void {
+  editingTaskId = null;
+  taskSubmitBtn.textContent = "Dodaj zadanie";
+  taskCancelBtn.style.display = "none";
+  taskForm.reset();
+}
+
+function setTaskModeEdit(task: Task): void {
+  editingTaskId = task.id;
+  taskNameInput.value = task.name;
+  taskDescInput.value = task.description;
+  taskPrioritySelect.value = task.priority;
+  taskEstimatedInput.value = String(task.estimatedTime);
+  taskSubmitBtn.textContent = "Zapisz zadanie";
+  taskCancelBtn.style.display = "inline-block";
+  taskNameInput.focus();
+}
+
+// ── Render projects ────────────────────────────────────────────────────────────
 function renderProjects(): void {
   const projects = projectService.getAll();
   const active = projectService.getActive();
@@ -185,9 +293,11 @@ function renderProjects(): void {
   projectList.querySelectorAll<HTMLButtonElement>(".select-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       projectService.setActive(btn.dataset.id!);
+      activeStoryId = null;
       setProjectModeCreate();
       renderProjects();
       renderStories();
+      renderTasks();
     });
   });
 
@@ -208,7 +318,7 @@ function renderProjects(): void {
   });
 }
 
-// ── Render story columns ──────────────────────────────────────────────────────
+// ── Render story columns ───────────────────────────────────────────────────────
 function renderStoryColumn(stories: Story[], listEl: HTMLUListElement): void {
   listEl.innerHTML = "";
 
@@ -218,13 +328,15 @@ function renderStoryColumn(stories: Story[], listEl: HTMLUListElement): void {
   }
 
   stories.forEach((story) => {
-    const date = new Date(story.createdAt).toLocaleDateString("pl-PL");
-    const owner = userService.getLoggedUser();
-    const ownerName = story.ownerId === owner.id
+    const owner = userService.getById(story.ownerId);
+    const ownerName = owner
       ? `${escapeHtml(owner.firstName)} ${escapeHtml(owner.lastName)}`
       : escapeHtml(story.ownerId);
+    const isActiveTask = story.id === activeStoryId;
+    const taskCount = taskService.getByStory(story.id).length;
+
     const li = document.createElement("li");
-    li.className = "story-card";
+    li.className = `story-card${isActiveTask ? " story-tasks-active" : ""}`;
     li.innerHTML = `
       <div class="story-card-top">
         <span class="story-card-name">${escapeHtml(story.name)}</span>
@@ -234,9 +346,12 @@ function renderStoryColumn(stories: Story[], listEl: HTMLUListElement): void {
       <div class="story-card-footer">
         <div class="story-meta">
           <span class="story-owner">👤 ${ownerName}</span>
-          <span class="story-date">${date}</span>
+          <span class="story-date">${fmt(story.createdAt)}</span>
         </div>
         <div class="actions">
+          <button class="story-tasks-btn${isActiveTask ? " btn-active" : ""}" data-id="${story.id}">
+            Zadania${taskCount > 0 ? ` (${taskCount})` : ""}
+          </button>
           <button class="story-edit-btn" data-id="${story.id}">Edytuj</button>
           <button class="story-delete-btn" data-id="${story.id}">Usuń</button>
         </div>
@@ -268,6 +383,15 @@ function renderStories(): void {
   renderStoryColumn(stories.filter((s) => s.status === "doing"), doingList);
   renderStoryColumn(stories.filter((s) => s.status === "done"), doneList);
 
+  document.querySelectorAll<HTMLButtonElement>(".story-tasks-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activeStoryId = btn.dataset.id!;
+      setTaskModeCreate();
+      renderStories();
+      renderTasks();
+    });
+  });
+
   document.querySelectorAll<HTMLButtonElement>(".story-edit-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const s = storyService.getAll().find((x) => x.id === btn.dataset.id);
@@ -279,12 +403,254 @@ function renderStories(): void {
     btn.addEventListener("click", () => {
       storyService.delete(btn.dataset.id!);
       if (editingStoryId === btn.dataset.id) setStoryModeCreate();
+      if (activeStoryId === btn.dataset.id) {
+        activeStoryId = null;
+        renderTasks();
+      }
       renderStories();
     });
   });
 }
 
-// ── Event handlers ────────────────────────────────────────────────────────────
+// ── Render task columns ────────────────────────────────────────────────────────
+function renderTaskColumn(tasks: Task[], listEl: HTMLUListElement): void {
+  listEl.innerHTML = "";
+
+  if (tasks.length === 0) {
+    listEl.innerHTML = `<li class="story-empty">Brak zadań</li>`;
+    return;
+  }
+
+  tasks.forEach((task) => {
+    const assignedUser = task.assignedUserId ? userService.getById(task.assignedUserId) : null;
+    const assignedName = assignedUser
+      ? `${escapeHtml(assignedUser.firstName)} ${escapeHtml(assignedUser.lastName)}`
+      : "Nieprzypisane";
+
+    const li = document.createElement("li");
+    li.className = "story-card";
+    li.innerHTML = `
+      <div class="story-card-top">
+        <span class="story-card-name">${escapeHtml(task.name)}</span>
+        <span class="priority-badge priority-${task.priority}">${PRIORITY_LABEL[task.priority]}</span>
+      </div>
+      <div class="story-card-desc">${escapeHtml(task.description)}</div>
+      <div class="story-card-footer">
+        <div class="story-meta">
+          <span class="story-owner">👤 ${assignedName}</span>
+          <span class="story-date">⏱ ${task.estimatedTime}h</span>
+        </div>
+        <div class="actions">
+          <button class="task-detail-btn" data-id="${task.id}">Szczegóły</button>
+          <button class="task-edit-btn" data-id="${task.id}">Edytuj</button>
+          <button class="task-delete-btn" data-id="${task.id}">Usuń</button>
+        </div>
+      </div>
+    `;
+    listEl.appendChild(li);
+  });
+}
+
+function renderTasks(): void {
+  if (!activeStoryId) {
+    tasksPlaceholder.style.display = "flex";
+    tasksContent.style.display = "none";
+    return;
+  }
+
+  const story = storyService.getAll().find((s) => s.id === activeStoryId);
+  if (!story) {
+    tasksPlaceholder.style.display = "flex";
+    tasksContent.style.display = "none";
+    return;
+  }
+
+  tasksPlaceholder.style.display = "none";
+  tasksContent.style.display = "block";
+  tasksTitle.textContent = `Zadania: ${story.name}`;
+
+  const tasks = taskService.getByStory(activeStoryId);
+  const todoList = document.getElementById("tasks-todo") as HTMLUListElement;
+  const doingList = document.getElementById("tasks-doing") as HTMLUListElement;
+  const doneList = document.getElementById("tasks-done") as HTMLUListElement;
+
+  renderTaskColumn(tasks.filter((t) => t.status === "todo"), todoList);
+  renderTaskColumn(tasks.filter((t) => t.status === "doing"), doingList);
+  renderTaskColumn(tasks.filter((t) => t.status === "done"), doneList);
+
+  document.querySelectorAll<HTMLButtonElement>(".task-detail-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openTaskDetail(btn.dataset.id!));
+  });
+
+  document.querySelectorAll<HTMLButtonElement>(".task-edit-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const t = taskService.getAll().find((x) => x.id === btn.dataset.id);
+      if (t) setTaskModeEdit(t);
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>(".task-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      taskService.delete(btn.dataset.id!);
+      if (editingTaskId === btn.dataset.id) setTaskModeCreate();
+      renderTasks();
+    });
+  });
+}
+
+// ── Task detail modal ──────────────────────────────────────────────────────────
+function openTaskDetail(taskId: string): void {
+  const task = taskService.getAll().find((t) => t.id === taskId);
+  if (!task) return;
+
+  const story = storyService.getAll().find((s) => s.id === task.storyId);
+  const assignedUser = task.assignedUserId ? userService.getById(task.assignedUserId) : null;
+  const assignedName = assignedUser
+    ? `${escapeHtml(assignedUser.firstName)} ${escapeHtml(assignedUser.lastName)}
+       <span class="role-badge role-${assignedUser.role}">${ROLE_LABEL[assignedUser.role]}</span>`
+    : "—";
+
+  const assignableUsers = userService.getAssignable();
+  const assignOptions = assignableUsers
+    .map(
+      (u) =>
+        `<option value="${u.id}" ${u.id === task.assignedUserId ? "selected" : ""}>
+          ${escapeHtml(u.firstName)} ${escapeHtml(u.lastName)} (${ROLE_LABEL[u.role]})
+        </option>`
+    )
+    .join("");
+
+  const canAssign = task.status !== "done";
+  const canComplete = task.status === "doing" && !!task.assignedUserId;
+
+  modalTaskName.textContent = task.name;
+  modalBody.innerHTML = `
+    <div class="modal-grid">
+      <div class="modal-section">
+        <h4 class="modal-section-title">Dane zadania</h4>
+        <div class="detail-row">
+          <span class="detail-label">Opis</span>
+          <span class="detail-value">${escapeHtml(task.description)}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Priorytet</span>
+          <span class="priority-badge priority-${task.priority}">${PRIORITY_LABEL[task.priority]}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Stan</span>
+          <span class="status-badge status-${task.status}">${STATUS_LABEL[task.status]}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Historyjka</span>
+          <span class="detail-value">${story ? escapeHtml(story.name) : "—"}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Dodano</span>
+          <span class="detail-value">${fmt(task.createdAt)}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Data startu</span>
+          <span class="detail-value">${fmt(task.startedAt)}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Data zakończenia</span>
+          <span class="detail-value">${fmt(task.finishedAt)}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Szac. czas</span>
+          <span class="detail-value">${task.estimatedTime}h</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Realiz. roboczogodziny</span>
+          <input
+            type="number"
+            id="modal-actual-time"
+            class="detail-input"
+            value="${task.actualTime ?? ""}"
+            placeholder="0"
+            min="0"
+            step="0.5"
+            data-task-id="${task.id}"
+          />
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Przypisany</span>
+          <span class="detail-value">${assignedName}</span>
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <h4 class="modal-section-title">Akcje</h4>
+        ${
+          canAssign
+            ? `<div class="modal-action-group">
+                <label class="detail-label">Przypisz osobę</label>
+                <select id="modal-assign-select" class="modal-select">
+                  <option value="">— wybierz —</option>
+                  ${assignOptions}
+                </select>
+                <button id="modal-assign-btn" class="btn-primary">Przypisz</button>
+              </div>`
+            : ""
+        }
+        ${
+          canComplete
+            ? `<div class="modal-action-group" style="margin-top:12px;">
+                <button id="modal-complete-btn" class="btn-done">Oznacz jako zakończone</button>
+              </div>`
+            : ""
+        }
+        ${
+          !canAssign && !canComplete
+            ? `<p class="detail-value" style="color:var(--accent-done);margin-top:0;">✓ Zadanie zakończone</p>`
+            : ""
+        }
+      </div>
+    </div>
+  `;
+
+  taskModal.style.display = "flex";
+  document.body.style.overflow = "hidden";
+
+  const actualTimeInput = document.getElementById("modal-actual-time") as HTMLInputElement;
+  actualTimeInput?.addEventListener("blur", () => {
+    const val = parseFloat(actualTimeInput.value);
+    const t = taskService.getAll().find((x) => x.id === taskId);
+    if (t) taskService.update({ ...t, actualTime: isNaN(val) ? undefined : val });
+  });
+
+  const assignBtn = document.getElementById("modal-assign-btn");
+  const assignSelect = document.getElementById("modal-assign-select") as HTMLSelectElement;
+  assignBtn?.addEventListener("click", () => {
+    const userId = assignSelect?.value;
+    if (!userId) return;
+    taskService.assign(taskId, userId);
+    renderStories();
+    renderTasks();
+    openTaskDetail(taskId);
+  });
+
+  const completeBtn = document.getElementById("modal-complete-btn");
+  completeBtn?.addEventListener("click", () => {
+    taskService.complete(taskId);
+    renderStories();
+    renderTasks();
+    openTaskDetail(taskId);
+  });
+}
+
+function closeTaskDetail(): void {
+  taskModal.style.display = "none";
+  document.body.style.overflow = "";
+}
+
+// ── Modal events ───────────────────────────────────────────────────────────────
+modalCloseBtn.addEventListener("click", closeTaskDetail);
+taskModal.addEventListener("click", (e) => {
+  if (e.target === taskModal) closeTaskDetail();
+});
+
+// ── Project form events ────────────────────────────────────────────────────────
 projForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = projNameInput.value.trim();
@@ -305,6 +671,7 @@ projForm.addEventListener("submit", (e) => {
 
 projCancelBtn.addEventListener("click", () => setProjectModeCreate());
 
+// ── Story form events ──────────────────────────────────────────────────────────
 storyForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = storyNameInput.value.trim();
@@ -316,9 +683,7 @@ storyForm.addEventListener("submit", (e) => {
 
   if (editingStoryId) {
     const existing = storyService.getAll().find((s) => s.id === editingStoryId);
-    if (existing) {
-      storyService.update({ ...existing, name, description, priority, status });
-    }
+    if (existing) storyService.update({ ...existing, name, description, priority, status });
     setStoryModeCreate();
   } else {
     storyService.create({
@@ -337,6 +702,37 @@ storyForm.addEventListener("submit", (e) => {
 
 storyCancelBtn.addEventListener("click", () => setStoryModeCreate());
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+// ── Task form events ───────────────────────────────────────────────────────────
+taskForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = taskNameInput.value.trim();
+  const description = taskDescInput.value.trim();
+  const priority = taskPrioritySelect.value as Task["priority"];
+  const estimatedTime = parseFloat(taskEstimatedInput.value);
+  if (!name || !description || !activeStoryId || isNaN(estimatedTime)) return;
+
+  if (editingTaskId) {
+    const existing = taskService.getAll().find((t) => t.id === editingTaskId);
+    if (existing) taskService.update({ ...existing, name, description, priority, estimatedTime });
+    setTaskModeCreate();
+  } else {
+    taskService.create({
+      name,
+      description,
+      priority,
+      estimatedTime,
+      storyId: activeStoryId,
+      status: "todo",
+    });
+    taskForm.reset();
+    taskNameInput.focus();
+  }
+  renderTasks();
+});
+
+taskCancelBtn.addEventListener("click", () => setTaskModeCreate());
+
+// ── Init ───────────────────────────────────────────────────────────────────────
 renderProjects();
 renderStories();
+renderTasks();

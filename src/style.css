@@ -70,7 +70,7 @@ body {
 
 .app-main {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 260px 1fr 1fr;
   gap: 20px;
   padding: 24px 28px;
   flex: 1;
@@ -406,9 +406,21 @@ button:active {
 }
 
 /* ── RESPONSIVE ──────────────────────────────────────────────────────────────── */
+@media (max-width: 1200px) {
+  .app-main {
+    grid-template-columns: 260px 1fr;
+  }
+  #tasks-panel {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 900px) {
   .app-main {
     grid-template-columns: 1fr;
+  }
+  #tasks-panel {
+    grid-column: 1;
   }
 }
 
@@ -426,7 +438,9 @@ button:active {
   }
 
   #story-name,
-  #story-desc {
+  #story-desc,
+  #task-name,
+  #task-desc {
     grid-column: span 1;
   }
 
@@ -437,4 +451,272 @@ button:active {
   .actions {
     justify-content: flex-end;
   }
+}
+
+/* ── ROLE BADGES ─────────────────────────────────────────────────────────────── */
+.role-badge {
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 1px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  vertical-align: middle;
+}
+
+.role-admin {
+  background: rgba(139, 92, 246, 0.18);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.role-developer {
+  background: rgba(74, 144, 217, 0.18);
+  color: var(--accent-todo);
+  border: 1px solid rgba(74, 144, 217, 0.3);
+}
+
+.role-devops {
+  background: rgba(232, 160, 32, 0.18);
+  color: var(--accent-doing);
+  border: 1px solid rgba(232, 160, 32, 0.3);
+}
+
+/* ── STORY TASKS ACTIVE ───────────────────────────────────────────────────────── */
+.story-tasks-active {
+  border-color: rgba(61, 186, 110, 0.4);
+  background: rgba(61, 186, 110, 0.05);
+}
+
+.story-tasks-btn {
+  font-size: 12px;
+  background: rgba(61, 186, 110, 0.08);
+  border-color: rgba(61, 186, 110, 0.2);
+  color: var(--accent-done);
+}
+
+.story-tasks-btn:hover {
+  background: rgba(61, 186, 110, 0.16);
+}
+
+.story-tasks-btn.btn-active {
+  background: rgba(61, 186, 110, 0.22);
+  border-color: rgba(61, 186, 110, 0.45);
+}
+
+/* ── STATUS BADGES ────────────────────────────────────────────────────────────── */
+.status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.status-todo {
+  background: rgba(74, 144, 217, 0.15);
+  color: var(--accent-todo);
+  border: 1px solid rgba(74, 144, 217, 0.25);
+}
+
+.status-doing {
+  background: rgba(232, 160, 32, 0.15);
+  color: var(--accent-doing);
+  border: 1px solid rgba(232, 160, 32, 0.25);
+}
+
+.status-done {
+  background: rgba(61, 186, 110, 0.15);
+  color: var(--accent-done);
+  border: 1px solid rgba(61, 186, 110, 0.25);
+}
+
+/* ── MODAL ───────────────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 24px;
+}
+
+.modal {
+  background: #151922;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  width: 100%;
+  max-width: 700px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  height: auto;
+  border-radius: 6px;
+  transition: color 0.15s;
+}
+
+.modal-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.modal-body {
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 600px) {
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal-section-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── DETAIL ROWS ─────────────────────────────────────────────────────────────── */
+.detail-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.detail-label {
+  font-size: 12px;
+  color: var(--muted);
+  width: 145px;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.detail-input {
+  width: 90px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.detail-input:focus {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.05);
+}
+
+/* ── MODAL ACTIONS ───────────────────────────────────────────────────────────── */
+.modal-action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal-select {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  outline: none;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.modal-select option {
+  background: #1a1f2b;
+  color: var(--text);
+}
+
+.btn-primary {
+  background: rgba(74, 144, 217, 0.18);
+  border-color: rgba(74, 144, 217, 0.35);
+  color: var(--accent-todo);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: rgba(74, 144, 217, 0.28);
+}
+
+.btn-done {
+  background: rgba(61, 186, 110, 0.18);
+  border-color: rgba(61, 186, 110, 0.35);
+  color: var(--accent-done);
+  font-weight: 600;
+}
+
+.btn-done:hover {
+  background: rgba(61, 186, 110, 0.28);
+}
+
+/* ── TASK FORM (number input) ─────────────────────────────────────────────────── */
+#task-estimated {
+  -moz-appearance: textfield;
+}
+
+#task-estimated::-webkit-outer-spin-button,
+#task-estimated::-webkit-inner-spin-button {
+  -webkit-appearance: none;
 }
