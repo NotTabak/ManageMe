@@ -3,8 +3,10 @@ import { ProjectService } from "./ProjectService";
 import { UserService } from "./UserService";
 import { StoryService } from "./StoryService";
 import { TaskService } from "./TaskService";
+import { NotificationService } from "./NotificationService";
 import type { Story } from "./Story";
 import type { Task } from "./Task";
+import type { UserNotification } from "./Notification";
 
 function escapeHtml(value: string): string {
   return value
@@ -25,12 +27,14 @@ const projectService = new ProjectService();
 const storyService = new StoryService();
 const userService = new UserService();
 const taskService = new TaskService(storyService);
+const notifService = new NotificationService();
 const currentUser = userService.getLoggedUser();
 
 let editingProjectId: string | null = null;
 let editingStoryId: string | null = null;
 let editingTaskId: string | null = null;
 let activeStoryId: string | null = null;
+let currentView: "projects" | "notifications" = "projects";
 
 // ── Labels ────────────────────────────────────────────────────────────────────
 const PRIORITY_LABEL: Record<string, string> = { low: "Niski", medium: "Średni", high: "Wysoki" };
@@ -42,6 +46,13 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div class="app-layout">
     <header class="app-header">
       <span class="app-title">ManageMe</span>
+      <nav class="flex items-center gap-1">
+        <button id="nav-projects-btn" class="nav-btn-active">Projekty</button>
+        <button id="nav-notifs-btn" class="nav-btn">
+          Powiadomienia
+          <span id="notif-badge" class="notif-badge ml-1.5" style="display:none;">0</span>
+        </button>
+      </nav>
       <div class="header-right">
         <button id="theme-toggle" class="btn-icon" title="Przełącz motyw"></button>
         <span class="user-badge">
@@ -51,7 +62,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       </div>
     </header>
 
-    <main class="app-main">
+    <main class="app-main" id="projects-main">
       <!-- Projects -->
       <section class="panel" id="projects-panel">
         <h2 class="panel-title">Projekty</h2>
@@ -151,6 +162,19 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </div>
       </section>
     </main>
+
+    <!-- Notifications view -->
+    <div id="notifications-view" style="display:none;">
+      <div class="max-w-2xl mx-auto px-6 py-6 w-full">
+        <div class="panel">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="panel-title m-0">Powiadomienia</h2>
+            <button id="mark-all-read-btn" class="btn-sm">Oznacz wszystkie jako przeczytane</button>
+          </div>
+          <div id="notif-list" class="flex flex-col gap-2"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Task detail modal -->
@@ -163,6 +187,20 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       <div class="modal-body" id="modal-body"></div>
     </div>
   </div>
+
+  <!-- Notification detail modal -->
+  <div id="notif-modal" class="modal-overlay" style="display:none;">
+    <div class="modal" style="max-width:480px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="notif-modal-title"></h3>
+        <button id="notif-modal-close" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="notif-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="fixed bottom-5 right-5 flex flex-col gap-3 z-50"></div>
 `;
 
 // ── Theme toggle ──────────────────────────────────────────────────────────────
@@ -214,6 +252,129 @@ const taskModal = document.getElementById("task-modal") as HTMLDivElement;
 const modalTaskName = document.getElementById("modal-task-name") as HTMLHeadingElement;
 const modalBody = document.getElementById("modal-body") as HTMLDivElement;
 const modalCloseBtn = document.getElementById("modal-close-btn") as HTMLButtonElement;
+
+// ── Notification helpers ──────────────────────────────────────────────────────
+function sendNotif(data: Omit<UserNotification, "id" | "date" | "isRead">): void {
+  const notif = notifService.send(data);
+  updateBadge();
+  if (notif.recipientId === currentUser.id && (notif.priority === "medium" || notif.priority === "high")) {
+    showToast(notif);
+  }
+}
+
+function updateBadge(): void {
+  const count = notifService.getUnreadCount(currentUser.id);
+  const badge = document.getElementById("notif-badge");
+  if (badge) {
+    badge.textContent = String(count);
+    badge.style.display = count > 0 ? "inline-flex" : "none";
+  }
+}
+
+function showToast(notif: UserNotification): void {
+  const container = document.getElementById("toast-container")!;
+  const div = document.createElement("div");
+  div.className = "toast-card";
+  div.innerHTML = `
+    <div class="toast-header">
+      <div class="flex flex-col gap-1">
+        <span class="badge-${notif.priority}">${PRIORITY_LABEL[notif.priority]}</span>
+        <p class="toast-title">${escapeHtml(notif.title)}</p>
+      </div>
+      <button class="toast-close">✕</button>
+    </div>
+    <p class="toast-message">${escapeHtml(notif.message)}</p>
+  `;
+  container.appendChild(div);
+  div.querySelector<HTMLButtonElement>(".toast-close")!.addEventListener("click", () => div.remove());
+  setTimeout(() => div.remove(), 5000);
+}
+
+function showView(view: "projects" | "notifications"): void {
+  currentView = view;
+  const projectsMain = document.getElementById("projects-main")!;
+  const notifView = document.getElementById("notifications-view")!;
+  const btnProjects = document.getElementById("nav-projects-btn")!;
+  const btnNotifs = document.getElementById("nav-notifs-btn")!;
+
+  if (view === "projects") {
+    projectsMain.style.display = "";
+    notifView.style.display = "none";
+    btnProjects.className = "nav-btn-active";
+    btnNotifs.className = "nav-btn";
+  } else {
+    projectsMain.style.display = "none";
+    notifView.style.display = "block";
+    btnProjects.className = "nav-btn";
+    btnNotifs.className = "nav-btn-active";
+    renderNotifications();
+  }
+}
+
+function renderNotifications(): void {
+  const notifList = document.getElementById("notif-list")!;
+  const notifs = notifService.getForUser(currentUser.id);
+
+  if (notifs.length === 0) {
+    notifList.innerHTML = `<p class="empty-state">Brak powiadomień</p>`;
+    return;
+  }
+
+  notifList.innerHTML = "";
+  notifs.forEach((notif) => {
+    const div = document.createElement("div");
+    div.className = notif.isRead ? "notif-item" : "notif-item-unread";
+    div.innerHTML = `
+      <div class="flex items-start justify-between gap-2">
+        <span class="text-sm font-semibold text-slate-800 dark:text-gray-200 leading-tight">${escapeHtml(notif.title)}</span>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <span class="badge-${notif.priority}">${PRIORITY_LABEL[notif.priority]}</span>
+          ${!notif.isRead ? '<span class="text-[10px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">Nowe</span>' : ""}
+        </div>
+      </div>
+      <p class="text-xs text-slate-500 dark:text-gray-400 leading-relaxed mt-0.5">${escapeHtml(notif.message)}</p>
+      <span class="text-xs text-slate-400 dark:text-gray-600">${fmt(notif.date)}</span>
+    `;
+    div.addEventListener("click", () => openNotifDetail(notif.id));
+    notifList.appendChild(div);
+  });
+}
+
+function openNotifDetail(notifId: string): void {
+  const notif = notifService.getAll().find((n) => n.id === notifId);
+  if (!notif) return;
+
+  notifService.markAsRead(notifId);
+  updateBadge();
+  if (currentView === "notifications") renderNotifications();
+
+  const modal = document.getElementById("notif-modal")!;
+  document.getElementById("notif-modal-title")!.textContent = notif.title;
+  document.getElementById("notif-modal-body")!.innerHTML = `
+    <div class="flex flex-col gap-3">
+      <div class="detail-row">
+        <span class="detail-label">Priorytet</span>
+        <span class="badge-${notif.priority}">${PRIORITY_LABEL[notif.priority]}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Data</span>
+        <span class="detail-value">${fmt(notif.date)}</span>
+      </div>
+      <div class="detail-row" style="align-items:flex-start;">
+        <span class="detail-label" style="padding-top:2px;">Wiadomość</span>
+        <span class="detail-value">${escapeHtml(notif.message)}</span>
+      </div>
+    </div>
+  `;
+
+  modal.style.display = "flex";
+  document.body.style.overflow = "hidden";
+}
+
+function closeNotifDetail(): void {
+  document.getElementById("notif-modal")!.style.display = "none";
+  document.body.style.overflow = "";
+}
 
 // ── Project form modes ────────────────────────────────────────────────────────
 function setProjectModeCreate(): void {
@@ -500,6 +661,18 @@ function renderTasks(): void {
 
   document.querySelectorAll<HTMLButtonElement>(".task-delete-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
+      const task = taskService.getAll().find((x) => x.id === btn.dataset.id);
+      if (task) {
+        const parentStory = storyService.getAll().find((s) => s.id === task.storyId);
+        if (parentStory) {
+          sendNotif({
+            title: "Zadanie usunięte",
+            message: `Zadanie "${task.name}" zostało usunięte z historyjki "${parentStory.name}".`,
+            priority: "medium",
+            recipientId: parentStory.ownerId,
+          });
+        }
+      }
       taskService.delete(btn.dataset.id!);
       if (editingTaskId === btn.dataset.id) setTaskModeCreate();
       renderTasks();
@@ -626,6 +799,24 @@ function openTaskDetail(taskId: string): void {
     const userId = assignSelect?.value;
     if (!userId) return;
     taskService.assign(taskId, userId);
+
+    const assignedTo = userService.getById(userId);
+    const taskStory = storyService.getAll().find((s) => s.id === task.storyId);
+    if (assignedTo && taskStory) {
+      sendNotif({
+        title: "Przypisano zadanie",
+        message: `Zostałeś przypisany do zadania "${task.name}" w historyjce "${taskStory.name}".`,
+        priority: "high",
+        recipientId: assignedTo.id,
+      });
+      sendNotif({
+        title: "Zadanie przypisane",
+        message: `Zadanie "${task.name}" zostało przypisane do ${assignedTo.firstName} ${assignedTo.lastName}.`,
+        priority: "low",
+        recipientId: taskStory.ownerId,
+      });
+    }
+
     renderStories();
     renderTasks();
     openTaskDetail(taskId);
@@ -633,7 +824,18 @@ function openTaskDetail(taskId: string): void {
 
   const completeBtn = document.getElementById("modal-complete-btn");
   completeBtn?.addEventListener("click", () => {
+    const taskStory = storyService.getAll().find((s) => s.id === task.storyId);
     taskService.complete(taskId);
+
+    if (taskStory) {
+      sendNotif({
+        title: "Zadanie zakończone",
+        message: `Zadanie "${task.name}" w historyjce "${taskStory.name}" zostało oznaczone jako zakończone.`,
+        priority: "medium",
+        recipientId: taskStory.ownerId,
+      });
+    }
+
     renderStories();
     renderTasks();
     openTaskDetail(taskId);
@@ -651,6 +853,21 @@ taskModal.addEventListener("click", (e) => {
   if (e.target === taskModal) closeTaskDetail();
 });
 
+document.getElementById("notif-modal-close")!.addEventListener("click", closeNotifDetail);
+document.getElementById("notif-modal")!.addEventListener("click", (e) => {
+  if (e.target === document.getElementById("notif-modal")) closeNotifDetail();
+});
+
+// ── Nav events ────────────────────────────────────────────────────────────────
+document.getElementById("nav-projects-btn")!.addEventListener("click", () => showView("projects"));
+document.getElementById("nav-notifs-btn")!.addEventListener("click", () => showView("notifications"));
+
+document.getElementById("mark-all-read-btn")!.addEventListener("click", () => {
+  notifService.markAllAsRead(currentUser.id);
+  updateBadge();
+  renderNotifications();
+});
+
 // ── Project form events ───────────────────────────────────────────────────────
 projForm.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -663,6 +880,14 @@ projForm.addEventListener("submit", (e) => {
     setProjectModeCreate();
   } else {
     projectService.create({ name, description });
+    userService.getAll()
+      .filter((u) => u.role === "admin")
+      .forEach((u) => sendNotif({
+        title: "Nowy projekt",
+        message: `Projekt "${name}" został dodany.`,
+        priority: "high",
+        recipientId: u.id,
+      }));
     projForm.reset();
     projNameInput.focus();
   }
@@ -688,6 +913,12 @@ storyForm.addEventListener("submit", (e) => {
     setStoryModeCreate();
   } else {
     storyService.create({ name, description, priority, status, projectId: active.id, ownerId: currentUser.id });
+    sendNotif({
+      title: "Nowa historyjka",
+      message: `Historyjka "${name}" została dodana do projektu "${active.name}".`,
+      priority: "high",
+      recipientId: currentUser.id,
+    });
     storyForm.reset();
     storyNameInput.focus();
   }
@@ -711,6 +942,15 @@ taskForm.addEventListener("submit", (e) => {
     setTaskModeCreate();
   } else {
     taskService.create({ name, description, priority, estimatedTime, storyId: activeStoryId, status: "todo" });
+    const parentStory = storyService.getAll().find((s) => s.id === activeStoryId);
+    if (parentStory) {
+      sendNotif({
+        title: "Nowe zadanie",
+        message: `Zadanie "${name}" zostało dodane do historyjki "${parentStory.name}".`,
+        priority: "medium",
+        recipientId: parentStory.ownerId,
+      });
+    }
     taskForm.reset();
     taskNameInput.focus();
   }
@@ -723,3 +963,4 @@ taskCancelBtn.addEventListener("click", () => setTaskModeCreate());
 renderProjects();
 renderStories();
 renderTasks();
+updateBadge();
