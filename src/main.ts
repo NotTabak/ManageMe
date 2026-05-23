@@ -22,7 +22,7 @@ function fmt(dateStr: string | undefined): string {
   return new Date(dateStr).toLocaleDateString("pl-PL");
 }
 
-// ── Services & state ──────────────────────────────────────────────────────────
+// serwisy i stan aplikacji
 const projectService = new ProjectService();
 const storyService = new StoryService();
 const userService = new UserService();
@@ -36,12 +36,12 @@ let editingTaskId: string | null = null;
 let activeStoryId: string | null = null;
 let currentView: "projects" | "notifications" = "projects";
 
-// ── Labels ────────────────────────────────────────────────────────────────────
+// etykiety do wyświetlania
 const PRIORITY_LABEL: Record<string, string> = { low: "Niski", medium: "Średni", high: "Wysoki" };
 const STATUS_LABEL: Record<string, string> = { todo: "Do zrobienia", doing: "W trakcie", done: "Gotowe" };
 const ROLE_LABEL: Record<string, string> = { admin: "Admin", developer: "Developer", devops: "DevOps" };
 
-// ── HTML skeleton ─────────────────────────────────────────────────────────────
+// główny HTML aplikacji
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div class="app-layout">
     <header class="app-header">
@@ -203,7 +203,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div id="toast-container" class="fixed bottom-5 right-5 flex flex-col gap-3 z-50"></div>
 `;
 
-// ── Theme toggle ──────────────────────────────────────────────────────────────
+// przełącznik motywu jasny/ciemny
 function updateThemeIcon(): void {
   const btn = document.getElementById("theme-toggle");
   if (btn) btn.textContent = document.documentElement.classList.contains("dark") ? "☀️" : "🌙";
@@ -217,7 +217,7 @@ document.getElementById("theme-toggle")!.addEventListener("click", () => {
   updateThemeIcon();
 });
 
-// ── DOM references ────────────────────────────────────────────────────────────
+// referencje do elementów DOM
 const projForm = document.getElementById("project-form") as HTMLFormElement;
 const projNameInput = document.getElementById("proj-name") as HTMLInputElement;
 const projDescInput = document.getElementById("proj-desc") as HTMLInputElement;
@@ -253,7 +253,7 @@ const modalTaskName = document.getElementById("modal-task-name") as HTMLHeadingE
 const modalBody = document.getElementById("modal-body") as HTMLDivElement;
 const modalCloseBtn = document.getElementById("modal-close-btn") as HTMLButtonElement;
 
-// ── Notification helpers ──────────────────────────────────────────────────────
+// funkcje pomocnicze do powiadomień
 function sendNotif(data: Omit<UserNotification, "id" | "date" | "isRead">): void {
   const notif = notifService.send(data);
   updateBadge();
@@ -376,7 +376,7 @@ function closeNotifDetail(): void {
   document.body.style.overflow = "";
 }
 
-// ── Project form modes ────────────────────────────────────────────────────────
+// tryby formularza projektu (dodawanie / edycja)
 function setProjectModeCreate(): void {
   editingProjectId = null;
   projSubmitBtn.textContent = "Dodaj projekt";
@@ -394,7 +394,7 @@ function setProjectModeEdit(project: { id: string; name: string; description: st
   projNameInput.focus();
 }
 
-// ── Story form modes ──────────────────────────────────────────────────────────
+// tryby formularza historyjki (dodawanie / edycja)
 function setStoryModeCreate(): void {
   editingStoryId = null;
   storySubmitBtn.textContent = "Dodaj historyjkę";
@@ -413,7 +413,7 @@ function setStoryModeEdit(story: Story): void {
   storyNameInput.focus();
 }
 
-// ── Task form modes ───────────────────────────────────────────────────────────
+// tryby formularza zadania (dodawanie / edycja)
 function setTaskModeCreate(): void {
   editingTaskId = null;
   taskSubmitBtn.textContent = "Dodaj zadanie";
@@ -432,7 +432,7 @@ function setTaskModeEdit(task: Task): void {
   taskNameInput.focus();
 }
 
-// ── Render projects ───────────────────────────────────────────────────────────
+// renderowanie listy projektów
 function renderProjects(): void {
   const projects = projectService.getAll();
   const active = projectService.getActive();
@@ -488,7 +488,7 @@ function renderProjects(): void {
   });
 }
 
-// ── Render story columns ──────────────────────────────────────────────────────
+// renderowanie kolumn kanban historyjek
 function renderStoryColumn(stories: Story[], listEl: HTMLUListElement): void {
   listEl.innerHTML = "";
 
@@ -582,7 +582,7 @@ function renderStories(): void {
   });
 }
 
-// ── Render task columns ───────────────────────────────────────────────────────
+// renderowanie kolumn kanban zadań
 function renderTaskColumn(tasks: Task[], listEl: HTMLUListElement): void {
   listEl.innerHTML = "";
 
@@ -680,7 +680,7 @@ function renderTasks(): void {
   });
 }
 
-// ── Task detail modal ─────────────────────────────────────────────────────────
+// modal ze szczegółami zadania
 function openTaskDetail(taskId: string): void {
   const task = taskService.getAll().find((t) => t.id === taskId);
   if (!task) return;
@@ -847,7 +847,7 @@ function closeTaskDetail(): void {
   document.body.style.overflow = "";
 }
 
-// ── Modal events ──────────────────────────────────────────────────────────────
+// zamykanie modali
 modalCloseBtn.addEventListener("click", closeTaskDetail);
 taskModal.addEventListener("click", (e) => {
   if (e.target === taskModal) closeTaskDetail();
@@ -858,7 +858,7 @@ document.getElementById("notif-modal")!.addEventListener("click", (e) => {
   if (e.target === document.getElementById("notif-modal")) closeNotifDetail();
 });
 
-// ── Nav events ────────────────────────────────────────────────────────────────
+// obsługa nawigacji między widokami
 document.getElementById("nav-projects-btn")!.addEventListener("click", () => showView("projects"));
 document.getElementById("nav-notifs-btn")!.addEventListener("click", () => showView("notifications"));
 
@@ -868,7 +868,7 @@ document.getElementById("mark-all-read-btn")!.addEventListener("click", () => {
   renderNotifications();
 });
 
-// ── Project form events ───────────────────────────────────────────────────────
+// obsługa formularza projektów
 projForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = projNameInput.value.trim();
@@ -897,7 +897,7 @@ projForm.addEventListener("submit", (e) => {
 
 projCancelBtn.addEventListener("click", () => setProjectModeCreate());
 
-// ── Story form events ─────────────────────────────────────────────────────────
+// obsługa formularza historyjek
 storyForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = storyNameInput.value.trim();
@@ -927,7 +927,7 @@ storyForm.addEventListener("submit", (e) => {
 
 storyCancelBtn.addEventListener("click", () => setStoryModeCreate());
 
-// ── Task form events ──────────────────────────────────────────────────────────
+// obsługa formularza zadań
 taskForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = taskNameInput.value.trim();
@@ -959,7 +959,7 @@ taskForm.addEventListener("submit", (e) => {
 
 taskCancelBtn.addEventListener("click", () => setTaskModeCreate());
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+// inicjalizacja — pierwsze renderowanie
 renderProjects();
 renderStories();
 renderTasks();
